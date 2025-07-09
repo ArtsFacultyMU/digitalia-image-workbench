@@ -1,0 +1,29 @@
+diff --git a/workbench b/workbench
+index 5d01332..fc6b60d 100755
+--- a/workbench
++++ b/workbench
+@@ -503,6 +503,11 @@ def create():
+             row_count += 1
+             row_position = get_percentage(row_count, num_csv_records)
+             pbar(row_position)
++            row_tally = ""
++            with open(config['log_file_path'] + ".tally") as file:
++                row_tally = file.readline()
++            with open(config['log_file_path'] + ".tally", "w") as file:
++                file.write(str(int(row_tally) + 1))
+ 
+         # If 'url_alias' is in the CSV, create the alias.
+         if "url_alias" in row and len(row["url_alias"]) > 0:
+@@ -1263,6 +1268,11 @@ def add_media():
+             row_count += 1
+             row_position = get_percentage(row_count, num_csv_records)
+             pbar(row_position)
++            row_tally = ""
++            with open(config['log_file_path'] + ".tally") as file:
++                row_tally = file.readline()
++            with open(config['log_file_path'] + ".tally", "w") as file:
++                file.write(str(int(row_tally) + 1))
+ 
+ 
+ def update_media() -> None:
+

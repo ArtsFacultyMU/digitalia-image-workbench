@@ -1,0 +1,6 @@
+task: create
+host: http://drupal
+input_dir: /var/lib/nginx/workbench/input_dir
+standalone_media_url: true
+progress_bar: true
+ignore_csv_columns: ['file_image', 'file_file']

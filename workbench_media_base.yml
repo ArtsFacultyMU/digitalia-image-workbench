@@ -1,0 +1,4 @@
+task: update_media
+host: http://drupal
+allow_missing_files: true
+standalone_media_url: true

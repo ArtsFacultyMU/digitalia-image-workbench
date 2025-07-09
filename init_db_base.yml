@@ -1,0 +1,3 @@
+task: create
+host: http://drupal
+rollback_config_file_path: /var/lib/nginx/workbench/init_rollback.yml
