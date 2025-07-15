@@ -43,8 +43,10 @@ function update_media_sip($timestamp, $base_path, $media_id, $state, &$all_files
 	fputcsv($sip_csv, $update_header);
 	fputcsv($sip_csv, $update_data);
 	fclose($sip_csv);
-	array_push($all_files, "{$base_path}/{$timestamp}_sip.csv");
-	array_push($all_files, "{$base_path}/{$timestamp}_sip.yml");
+
+	$all_files["{$base_path}/{$timestamp}_sip.csv"] = 1;
+	$all_files["{$base_path}/{$timestamp}_sip.yml"] = 1;
+
 	$command = "/var/lib/nginx/islandora_workbench/workbench --config {$base_path}/{$timestamp}_sip.yml";
 	$command .= " 2>&1";
 
@@ -95,10 +97,13 @@ $parsed_config['log_file_path'] = "{$user_id}_{$media_id}.log";
 $by_content_type = array();
 $by_media_type = array();
 $content_type_yml_paths = array();
+$subcontent_type_yml_paths = array();
 $media_type_yml_paths = array();
 $id_map = array();
+$sub_id_map = array();
 $all_files = array();
 $delimiter = "|";
+$subdelimiter = ";";
 $total_retval = 0;
 $total_entity_count = 0;
 $ingest_state = "in progress";
@@ -148,6 +153,7 @@ if (!$original_csv) {
 	print_r("{$sip_directory_name}");
 	return 500;
 }
+
 $header = fgetcsv($original_csv);
 
 
@@ -155,10 +161,14 @@ if (!$header) {
 	print_r("failed to parse csv file");
 }
 
+
+
+
 update_media_sip($timestamp, $base_path, $_POST['media_id'], $ingest_state, $all_files);
 
 $content_type_index;
 $media_type_index = array();
+$forward_reference_index = array();
 
 for ($i = 0; $i < count($header); $i += 1) {
 	print_r($header[array_keys($header)[$i]]);
@@ -167,6 +177,12 @@ for ($i = 0; $i < count($header); $i += 1) {
 		$content_type_index = $i;
 	}
 
+	// find forward referencing fields
+	if (str_contains($header[$i], ":")) {
+		$forward_reference_index[$header[$i]] = $i;
+	}
+
+	// file fields
 	if (str_starts_with($header[array_keys($header)[$i]], "file_")) {
 
 		$media_type_index[$header[$i]] = $i;
@@ -176,10 +192,15 @@ for ($i = 0; $i < count($header); $i += 1) {
 }
 
 
-foreach($media_type_index as $media_type => $_media_index) {
+foreach ($media_type_index as $media_type => $_media_index) {
 	$by_media_type[$media_type] = array();
 }
 
+foreach ($forward_reference_index as $subcontent_type => $_value) {
+	$by_subcontent_type[$subcontent_type] = array();
+}
+
+print_r($forward_reference_index);
 
 while ($line = fgetcsv($original_csv)) {
 	if (!isset($by_content_type[$line[array_keys($line)[$content_type_index]]])) {
@@ -188,8 +209,15 @@ while ($line = fgetcsv($original_csv)) {
 
 	array_push($by_content_type[$line[array_keys($line)[$content_type_index]]], $line);
 
+	foreach ($forward_reference_index as $ref_type => $ref_id) {
+		if (!empty($line[$ref_id])) {
+			array_push($by_subcontent_type[$ref_type], $line);
+			$total_entity_count += count(explode($delimiter, $line[$ref_id]));
+		}
+	}
 
-	foreach($media_type_index as $media_type => $media_index) {
+
+	foreach ($media_type_index as $media_type => $media_index) {
 		if (!empty($line[$media_index])) {
 			array_push($by_media_type[$media_type], $line);
 			$total_entity_count += count(explode($delimiter, $line[$media_index]));
@@ -201,6 +229,97 @@ while ($line = fgetcsv($original_csv)) {
 
 fclose($original_csv);
 
+print_r($by_media_type);
+print_r($by_subcontent_type);
+
+$forward_ref_types = array();
+$subentity_header_base = ["id", "title"];
+
+// create separate csv for reference fields
+// id,title,<list of fields>
+// must be imported first
+foreach ($by_subcontent_type as $subfield_definition => $lines) {
+	$parsed_config_content = $parsed_config;
+
+	$subfield_header = explode(":", $subfield_definition);
+	if (count($subfield_header) < 3) {
+		print_r("invalid subfield definition");
+		return;
+	}
+
+	
+	$subfield_name = array_shift($subfield_header);
+	$content_type = array_shift($subfield_header);
+
+	$local_header = array_merge($subentity_header_base, $subfield_header);
+
+	print_r($local_header);
+
+	$parsed_config_content['content_type'] = $content_type;
+
+	if (!isset($parsed_config_content['csv_field_templates'])) {
+		$parsed_config_content['csv_field_templates'] = array();
+	}
+
+	$parsed_config_content['input_dir'] = "{$base_path}/output_dir";
+	$parsed_config_content['nodes_only'] = "true";
+	$parsed_config_content['input_csv'] = "{$timestamp}_{$subfield_name}_{$content_type}.csv";
+	array_push($parsed_config_content['ignore_csv_columns'], "type");
+	array_push($parsed_config_content['ignore_csv_columns'], "source_id");
+	
+	array_push($parsed_config_content['csv_field_templates'], array("uid" => $_POST['user_id']));
+
+	$content_yml_path = "{$base_path}/output_dir/{$timestamp}_{$subfield_name}_{$content_type}.yml";
+	$content_csv_path = "{$base_path}/output_dir/{$timestamp}_{$subfield_name}_{$content_type}.csv";
+	yaml_emit_file($content_yml_path, $parsed_config_content);
+
+	$all_files[$content_yml_path] = 1;
+
+	print_r($parsed_config_content);
+
+
+	//$all_files[$content_csv_path] = 1;
+
+	$content_csv = fopen($content_csv_path, "w");
+
+
+
+
+	fputcsv($content_csv, $local_header);
+	$id = 1;
+	foreach ($lines as $line) {
+		$exploded = explode($delimiter, $line[$forward_reference_index[$subfield_definition]]);
+		foreach ($exploded as $repeated_subfield) {
+			// original id is in first column
+			$data = [
+				$line[0] . "_" . $id,
+				$timestamp . "_" . rand(),
+			];
+
+			$id += 1;
+
+			$subfield_data = explode($subdelimiter, $repeated_subfield);
+
+			print_r($subfield_data);
+
+			$data = array_merge($data, $subfield_data);
+
+			print_r($data);
+			fputcsv($content_csv, $data);
+		}
+	}
+	fclose($content_csv);
+
+	$subcontent_type_yml_paths[$subfield_name] = $content_yml_path;
+}
+
+if (!file_exists("/tmp/csv_id_to_node_id_map.db")) {
+	init_db();
+}
+
+
+print_r($subcontent_type_yml_paths);
+
 // prepare progress files
 $entity_tally = fopen("/var/www/html/api/{$user_id}_{$media_id}.log.tally", "w");
 $entity_total = fopen("/var/www/html/api/{$user_id}_{$media_id}.log.total", "w");
@@ -211,8 +330,61 @@ fwrite($entity_total, $total_entity_count);
 fclose($entity_tally);
 fclose($entity_total);
 
+// import subfield nodes
+foreach ($subcontent_type_yml_paths as $subfield_name => $path) {
+	$command = "/var/lib/nginx/islandora_workbench/workbench --config {$path}";
+
+	$check = (bool) $_POST['check'];
+	if ($check) {
+		$command .= " --check";
+	}
+	
+	$command .= " 2>&1";
+	
+	
+	$node_ingest_output = array();
+	$retval;
+	$last_line = exec($command, $node_ingest_output, $retval);
+	$total_retval += $retval;
+
+	print_r($last_line);
+	print_r($retval);
+
+
+	// get id -> nid mapping from workbench sqlite database
+	$db = new SQLite3("/tmp/csv_id_to_node_id_map.db", SQLITE3_OPEN_READONLY);
+	$db_result = $db->query("SELECT csv_id,node_id FROM csv_id_to_node_id_map WHERE config_file='{$path}'");
+	while ($line = $db_result->fetchArray(SQLITE3_ASSOC)) {
+		print_r($line);
+		if (!isset($sub_id_map[$subfield_name][explode("_", $line["csv_id"])[0]])) {
+			$sub_id_map[$subfield_name][explode("_", $line["csv_id"])[0]] = array();
+		}
+		array_push($sub_id_map[$subfield_name][explode("_", $line["csv_id"])[0]], $line["node_id"]);
+	}
+	$db->close();
+}
+
+print_r($sub_id_map);
+print_r(array_keys($sub_id_map));
+
+$sub_id_map_final = array();
+
+// prepare final forward reference ids
+foreach ($sub_id_map as $subfield => $data) {
+	$sub_id_map_final[$subfield] = array();
+	foreach ($data as $id => $list) {
+		$sub_id_map_final[$subfield][$id] = implode($delimiter, $list);
+	}
+}
+
+
+print_r("-------------------------");
+print_r($sub_id_map_final);
+
+
+
 // write out node csvs and ymls
-foreach($by_content_type as $content_type => $lines) {
+foreach ($by_content_type as $content_type => $lines) {
 	$parsed_config_content = $parsed_config;
 	$parsed_config_content['content_type'] = $content_type;
 	
@@ -224,6 +396,9 @@ foreach($by_content_type as $content_type => $lines) {
 	$parsed_config_content['nodes_only'] = "true";
 	$parsed_config_content['input_csv'] = "{$timestamp}_{$content_type}.csv";
 	array_push($parsed_config_content['ignore_csv_columns'], "type");
+	foreach ($forward_reference_index as $field_id => $_value) {
+		array_push($parsed_config_content['ignore_csv_columns'], $field_id);
+	}
 	
 	array_push($parsed_config_content['csv_field_templates'], array("uid" => $_POST['user_id']));
 
@@ -231,16 +406,20 @@ foreach($by_content_type as $content_type => $lines) {
 	$content_csv_path = "{$base_path}/output_dir/{$timestamp}_{$content_type}.csv";
 	yaml_emit_file($content_yml_path, $parsed_config_content);
 
-	array_push($all_files, $content_yml_path);
-	array_push($all_files, $content_csv_path);
+	$all_files[$content_yml_path] = 1;
+	$all_files[$content_csv_path] = 1;
 
 	$content_csv = fopen($content_csv_path, "w");
 
-	$local_header = $header;
-	print_r($local_header);
+	$local_header = array_merge($header, array_keys($sub_id_map));
+
 
 	fputcsv($content_csv, $local_header);
-	foreach($lines as $line) {
+	foreach ($lines as $line) {
+		foreach ($sub_id_map_final as $subfield) {
+			array_push($line, $subfield[$line[0]]);
+		}
+		print_r($line);
 		fputcsv($content_csv, $line);
 	}
 	fclose($content_csv);
@@ -249,14 +428,11 @@ foreach($by_content_type as $content_type => $lines) {
 
 }
 
-if (!file_exists("/tmp/csv_id_to_node_id_map.db")) {
-	init_db();
-}
 
 // import nodes
-foreach($content_type_yml_paths as $path) {
+foreach ($content_type_yml_paths as $path) {
 	$command = "/var/lib/nginx/islandora_workbench/workbench --config {$path}";
-	
+
 	$check = (bool) $_POST['check'];
 	if ($check) {
 		$command .= " --check";
@@ -274,13 +450,15 @@ foreach($content_type_yml_paths as $path) {
 	$db = new SQLite3("/tmp/csv_id_to_node_id_map.db", SQLITE3_OPEN_READONLY);
 	$db_result = $db->query("SELECT csv_id,node_id FROM csv_id_to_node_id_map WHERE config_file='{$path}'");
 	while ($line = $db_result->fetchArray(SQLITE3_ASSOC)) {
+		print_r($line);
 		$id_map[$line["csv_id"]] = $line["node_id"];
 	}
 	$db->close();
 }
 
+
 // write out media csvs and ymls
-foreach($by_media_type as $media_type => $lines) {
+foreach ($by_media_type as $media_type => $lines) {
 	$parsed_config_content = $parsed_config;
 	$parsed_config_content['task'] = "add_media";
 	
@@ -303,8 +481,8 @@ foreach($by_media_type as $media_type => $lines) {
 
 	array_push($media_type_yml_paths, $media_yml_path);
 
-	array_push($all_files, $media_yml_path);
-	array_push($all_files, $media_csv_path);
+	$all_files[$media_yml_path] = 1;
+	$all_files[$media_csv_path] = 1;
 
 	$local_header = [
 		"node_id",
@@ -312,8 +490,8 @@ foreach($by_media_type as $media_type => $lines) {
 	];
 
 	fputcsv($content_csv, $local_header);
-	foreach($lines as $line) {
-		foreach(explode($delimiter, $line[$media_type_index[$media_type]]) as $file) { 
+	foreach ($lines as $line) {
+		foreach (explode($delimiter, $line[$media_type_index[$media_type]]) as $file) { 
 			$new_line = [
 				$id_map[$line[$header_index["id"]]],
 				$file
@@ -325,7 +503,7 @@ foreach($by_media_type as $media_type => $lines) {
 }
 
 // import media
-foreach($media_type_yml_paths as $path) {
+foreach ($media_type_yml_paths as $path) {
 	$command = "/var/lib/nginx/islandora_workbench/workbench --config {$path}";
 	
 	if ((bool) $_POST['check']) {
@@ -352,7 +530,7 @@ update_media_sip($timestamp, $base_path, $_POST['media_id'], $ingest_state, $all
 unlink($zip_path);
 delete_recursive($zip_extract_path);
 
-foreach ($all_files as $file) {
+foreach ($all_files as $file => $_value) {
 	unlink($file);
 }
 
