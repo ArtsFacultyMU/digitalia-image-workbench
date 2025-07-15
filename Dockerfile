@@ -27,6 +27,7 @@ RUN	   apk -qq update \
 	&& apk -qq add patch \
 	&& apk -qq add nginx \
 	&& apk -qq add vim \
+	&& apk -qq add gettext-envsubst \
 	&& apk -qq add php82-fpm php82-soap php82-openssl php82-gmp php82-pdo_odbc php82-json php82-dom php82-pdo php82-zip php82-mysqli php82-sqlite3 php82-apcu php82-pdo_pgsql php82-bcmath php82-gd php82-odbc php82-pdo_mysql php82-pdo_sqlite php82-gettext php82-xmlreader php82-bz2 php82-iconv php82-pdo_dblib php82-curl php82-ctype php82-pecl-yaml \
 	&& rm -rf /var/cache/apk/*
 
@@ -51,6 +52,7 @@ RUN	   mkdir -p /var/lib/nginx/workbench/input_dir \
    	&& chown -R nginx:nginx /var/lib/nginx/workbench \
    	&& chown -R nginx:nginx /var/www/html \
 	&& chown -R nginx:nginx /var/log/php82 \
+	&& chown -R nginx:nginx /etc/nginx/http.d \
 	&& chmod 755 /usr/local/bin/docker-entrypoint.sh
 
 USER 100
