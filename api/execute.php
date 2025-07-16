@@ -34,9 +34,17 @@ function update_media_sip($timestamp, $base_path, $media_id, $state, &$all_files
 	];
 
 	$parsed_config_sip['input_csv'] = "{$timestamp}_sip.csv";
-	yaml_emit_file("{$base_path}/{$timestamp}_sip.yml", $parsed_config_sip);
+	if (!yaml_emit_file("{$base_path}/{$timestamp}_sip.yml", $parsed_config_sip)) {
+		print_r("Failed to write media yml. Exiting.");
+		return 500;
+	}
 
 	$sip_csv = fopen("{$base_path}/{$timestamp}_sip.csv", "w");
+
+	if (!$sip_csv) {
+		print_r("Failed to write media update csv. Exiting.");
+		return;
+	}
 
 	fputcsv($sip_csv, $update_header);
 	fputcsv($sip_csv, $update_data);
@@ -54,7 +62,10 @@ function init_db()
 	$parsed_config['username'] = getenv("DRUPAL_USERNAME");
 	$parsed_config['password'] = getenv("DRUPAL_PASSWORD");
 
-	yaml_emit_file("/var/lib/nginx/workbench/init_db.yml", $parsed_config);
+	if (!yaml_emit_file("/var/lib/nginx/workbench/init_db.yml", $parsed_config)) {
+		print_r("Failed to write init_db yml. Exiting.");
+		return 500;
+	}
 
 	$command_create = "/var/lib/nginx/islandora_workbench/workbench --config /var/lib/nginx/workbench/init_db.yml";
 	$command_delete = "/var/lib/nginx/islandora_workbench/workbench --config /var/lib/nginx/workbench/init_rollback.yml";
@@ -67,7 +78,11 @@ function init_db()
 	$parsed_config['username'] = getenv("DRUPAL_USERNAME");
 	$parsed_config['password'] = getenv("DRUPAL_PASSWORD");
 
-	yaml_emit_file("/var/lib/nginx/workbench/init_rollback.yml", $parsed_config);
+	if (!yaml_emit_file("/var/lib/nginx/workbench/init_rollback.yml", $parsed_config)) {
+		print_r("Failed to write init_db rollback yml. Exiting.");
+		return 500;
+
+	}
 
 	if ($retval == 0) {
 		$last_line = exec($command_delete, $output, $retval);
@@ -119,7 +134,11 @@ $ingest_state = "in progress";
 $base_path = "/var/lib/nginx/workbench";
 $zip_path = "{$base_path}/input_dir/{$timestamp}.zip";
 $zip_extract_path = "{$base_path}/input_dir/{$timestamp}";
-file_put_contents($zip_path, fopen("http://drupal" . $_POST['media_url'], "r"));
+
+if (!file_put_contents($zip_path, fopen("http://drupal" . $_POST['media_url'], "r"))) {
+	print_r("Failed to download SIP. Exiting");
+	return 500;
+}
 
 $exploded_url = explode("/", $_POST['media_url']);
 $zip_filename = end($exploded_url);
@@ -133,7 +152,7 @@ if ($zip_res) {
 	$zip->close();
 } else {
 	print_r("Archive extraction failed");
-	return;
+	return 500;
 }
 
 // the archive should contain exactly one directory
@@ -141,7 +160,7 @@ if ($zip_res) {
 $dir_ls = scandir($zip_extract_path, SCANDIR_SORT_DESCENDING);
 if (count($dir_ls) != 3) {
 	print_r("invalid SIP format, root path doesn't contain exactly one directory");
-	return;
+	return 500;
 }
 
 $sip_directory_name = $dir_ls[0];
@@ -262,12 +281,21 @@ foreach ($by_subcontent_type as $subfield_definition => $lines) {
 	$content_yml_path = "{$parsed_config_content['input_dir']}/{$file_base_name}.yml";
 	$content_csv_path = "{$parsed_config_content['input_dir']}/{$file_base_name}.csv";
 
-	yaml_emit_file($content_yml_path, $parsed_config_content);
+	if (!yaml_emit_file($content_yml_path, $parsed_config_content)) {
+		print_r("Failed to write subfield yml. Exiting.");
+		return 500;
+	}
 
 	$all_files[$content_yml_path] = 1;
 	$all_files[$content_csv_path] = 1;
 
 	$content_csv = fopen($content_csv_path, "w");
+
+	if (!$content_csv) {
+		print_r("Failed to write media update csv. Exiting.");
+		return 500;
+	}
+
 	fputcsv($content_csv, $local_header);
 
 	$id = 1;
@@ -301,6 +329,11 @@ if (!file_exists("/tmp/csv_id_to_node_id_map.db")) {
 // prepare progress files
 $entity_tally = fopen("/var/www/html/api/{$user_id}_{$media_id}.log.tally", "w");
 $entity_total = fopen("/var/www/html/api/{$user_id}_{$media_id}.log.total", "w");
+
+if (!$entity_tally || !$entity_total) {
+	print_r("Failed to write progress counters. Exiting.");
+	return 500;
+}
 
 fwrite($entity_tally, "0");
 fwrite($entity_total, $total_entity_count);
@@ -358,12 +391,21 @@ foreach ($by_content_type as $content_type => $lines) {
 
 	$content_yml_path = "{$parsed_config_content['input_dir']}/{$file_base_name}.yml";
 	$content_csv_path = "{$parsed_config_content['input_dir']}/{$file_base_name}.csv";
-	yaml_emit_file($content_yml_path, $parsed_config_content);
+
+	if (!yaml_emit_file($content_yml_path, $parsed_config_content)) {
+		print_r("Failed to write content yml. Exiting.");
+		return 500;
+	}
 
 	$all_files[$content_yml_path] = 1;
 	$all_files[$content_csv_path] = 1;
 
 	$content_csv = fopen($content_csv_path, "w");
+
+	if (!$content_csv) {
+		print_r("Failed to write content csv. Exiting.");
+		return 500;
+	}
 
 	$local_header = array_merge($header, array_keys($sub_id_map));
 
@@ -371,7 +413,11 @@ foreach ($by_content_type as $content_type => $lines) {
 	fputcsv($content_csv, $local_header);
 	foreach ($lines as $line) {
 		foreach ($sub_id_map_clean as $subfield) {
-			array_push($line, $subfield[$line[0]]);
+			$to_push = "";
+			if (isset($subfield[$line[0]])) {
+				$to_push = $subfield[$line[0]];
+			}
+			array_push($line, $to_push);
 		}
 		fputcsv($content_csv, $line);
 	}
@@ -415,9 +461,17 @@ foreach ($by_media_type as $media_type => $lines) {
 	$media_yml_path = "{$output_dir_path}/{$file_base_name}.yml";
 	$media_csv_path = "{$output_dir_path}/{$file_base_name}.csv";
 
-	yaml_emit_file($media_yml_path, $parsed_config_content);
+	if (!yaml_emit_file($media_yml_path, $parsed_config_content)) {
+		print_r("Failed to write media yml. Exiting.");
+		return 500;
+	}
 
 	$content_csv = fopen($media_csv_path, "w");
+
+	if (!$content_csv) {
+		print_r("Failed to write media csv. Exiting.");
+		return 500;
+	}
 
 	array_push($media_type_yml_paths, $media_yml_path);
 
